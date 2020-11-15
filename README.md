@@ -1,3 +1,10 @@
+# genmc-dom
+
+2020-11-15: Add show dominator tree graph
+
+![genmc-dom](/rsrc/genmc_dom.gif)
+
+note: no shortcuts.
 # genmc - Display Hex-Rays Microcode
 
 genmc is an IDAPython script/plugin hybrid that displays Hexrays decompiler

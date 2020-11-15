@@ -240,6 +240,122 @@ class microcode_graphviewer_t(ida_graph.GraphViewer):
         else:
             return vp.s
 
+class dominance_graphviewer_t(microcode_graphviewer_t):
+
+    
+
+    def __init__(self, *args):
+        microcode_graphviewer_t.__init__(self, *args)
+        self.dom_command_id = self.AddCommand("Show Dominance Graph", "D")
+        self.full_command_id = self.AddCommand("Show Full Graph", "F")
+        self.back_command_id = self.AddCommand("Show Previous Graph", "P")
+        self.state = "cfg"
+        self.back_stack = []
+        self.select_block = None
+        self.select_node = -1
+        self.dom = {}
+
+        self.compute_dominates()
+
+    def OnCommand(self, cmd_id):
+        if self.select_node != -1:
+            node = self[self.select_node]
+            if isinstance(node, hr.mblock_t):
+                self.select_block = node
+            elif isinstance(node, int):
+                self.select_block = self._mba.get_mblock(node)
+        if cmd_id == self.dom_command_id and self.select_node != -1:
+            self.state = "dom"
+            self.Refresh()
+            self.Select(self.select_node)
+            self.back_stack.append(self.select_block.serial)
+        elif cmd_id == self.full_command_id:
+            self.state = "cfg"
+            last_select = self.select_block.serial if self.select_block else -1
+            self.select_node = -1
+            self.select_block = None
+            self.Refresh()
+            if last_select >= 0:
+                self.Select(last_select)
+        elif cmd_id == self.back_command_id and len(self.back_stack) > 0:
+            self.back_stack.pop()
+            if not self.back_stack:
+                return self.OnCommand(self.full_command_id)
+            else:
+                serial = self.back_stack[-1]
+                self.select_block = self._mba.get_mblock(serial)
+                self.state = "dom"
+                self.Refresh()
+                self.Select(self.select_node)
+
+    def OnClick(self, node_id):
+        self.select_node = node_id
+
+    def compute_dominates(self):
+        nodes = set(list(range(self._mba.qty)))
+        self.dom = {}
+        for node in nodes:
+            self.dom[node] = set(nodes)
+
+        self.dom[0] = set([0])
+        todo = set(nodes)
+
+        while todo:
+            node = todo.pop()
+
+            if node == 0:
+                continue
+
+            new_dom = None
+            mblock = self._mba.get_mblock(node)
+            for pred in mblock.predset:
+                if not pred in nodes:
+                    continue
+
+                if new_dom is None:
+                    new_dom = set(self.dom[pred])
+                new_dom &= self.dom[pred]
+            if new_dom is None:
+                new_dom = set([node])
+            else:
+                new_dom |= set([node])
+
+            if new_dom == self.dom[node]:
+                continue
+
+            self.dom[node] = new_dom
+            for succ in mblock.succset:
+                todo.add(succ)
+
+    def _get_dominates(self, blk):
+        result = []
+        for dom in self.dom:
+            if blk.serial in self.dom[dom]:
+                result.append(self._mba.get_mblock(dom))
+        return result
+
+    def OnRefresh(self):
+        if self.state == "dom" and self.select_block:
+            self.Clear()
+            node_ids = {}
+            dominates = self._get_dominates(self.select_block)
+            for block in dominates:
+                node_id = self.AddNode(block)
+                if block.serial == self.select_block.serial:
+                    self.select_node = node_id
+                node_ids[block.serial] = node_id
+            for block in dominates:
+                for dest in block.succset:
+                    if dest in node_ids:
+                        self.AddEdge(node_ids[block.serial], node_ids[dest])
+            return True
+        return microcode_graphviewer_t.OnRefresh(self)
+
+    def OnGetText(self, node_id):
+        if isinstance(self[node_id], hr.mblock_t):
+            node_id = self[node_id].serial
+        return microcode_graphviewer_t.OnGetText(self, node_id)
+
 # -----------------------------------------------------------------------------
 class microcode_viewer_t(kw.simplecustviewer_t):
     """Creates a widget that displays Hex-Rays microcode."""
@@ -280,7 +396,7 @@ class microcode_viewer_t(kw.simplecustviewer_t):
     registering an "action" and assigning it a hotkey"""
     def OnKeydown(self, vkey, shift):
         if vkey == ord("G"):
-            g = microcode_graphviewer_t(self._mba, self.title, self.lines)
+            g = dominance_graphviewer_t(self._mba, self.title, self.lines)
             if g:
                 g.Show()
                 self._fit_graph(g)
